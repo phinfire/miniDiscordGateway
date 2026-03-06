@@ -35,7 +35,7 @@ async def get_guild_users(client: discord.Client, guild_id: int) -> GuildUsersRe
         user_id_str = str(member.id)
         
         user_info = UserInfo(
-            id=member.id,
+            id=str(member.id),
             username=member.name,
             discriminator=member.discriminator or "0000",
             display_name=member.display_name,
