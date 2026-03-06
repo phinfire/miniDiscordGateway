@@ -3,7 +3,7 @@ from typing import Dict, Any
 
 class UserInfo(BaseModel):
     """Discord user information."""
-    id: int
+    id: str
     username: str
     discriminator: str
     display_name: str
@@ -27,7 +27,7 @@ class UserInfo(BaseModel):
 
 class GuildUsersResponse(BaseModel):
     """Response containing user map for a guild."""
-    guild_id: int
+    guild_id: str
     guild_name: str
     total_members: int
     users: Dict[str, UserInfo]
