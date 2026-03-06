@@ -35,7 +35,7 @@ async def get_guild_users(client: discord.Client, guild_id: int) -> GuildUsersRe
         user_id_str = str(member.id)
         
         user_info = UserInfo(
-            id=member.id,
+            id=str(member.id),
             username=member.name,
             discriminator=member.discriminator or "0000",
             display_name=member.display_name,
@@ -48,7 +48,7 @@ async def get_guild_users(client: discord.Client, guild_id: int) -> GuildUsersRe
     
     logger.info(f"Retrieved {len(users_map)} members from guild {guild.name}")
     return GuildUsersResponse(
-        guild_id=guild.id,
+        guild_id=str(guild.id),
         guild_name=guild.name,
         total_members=len(users_map),
         users=users_map
