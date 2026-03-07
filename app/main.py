@@ -5,14 +5,15 @@ Wraps discord.py client with async HTTP endpoints
 import os
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
 from .discord_client import DiscordClientManager
 from .services import get_guild_users, get_users_by_ids
-from .models import GuildUsersResponse, UsersResponse, UserIdsRequest, ErrorResponse
+from .models import GuildUsersResponse, UsersResponse, ErrorResponse
 
 load_dotenv()
 
@@ -26,6 +27,7 @@ if not DISCORD_TOKEN:
     raise ValueError("DISCORD_TOKEN environment variable not set")
 client = DiscordClientManager.get_client(DISCORD_TOKEN)
 client_ready = asyncio.Event()
+app_start_time = None
 
 @client.event
 async def on_ready():
@@ -40,6 +42,7 @@ async def lifespan(app: FastAPI):
     Lifespan context manager for FastAPI.
     Handles startup and shutdown of Discord client.
     """
+    global app_start_time
     logger.info("🚀 Starting Discord client...")
     
     async def run_discord_client():
@@ -52,6 +55,7 @@ async def lifespan(app: FastAPI):
     try:
         await asyncio.wait_for(client_ready.wait(), timeout=10.0)
         logger.info("Discord client is ready")
+        app_start_time = time.time()
     except asyncio.TimeoutError:
         logger.error("Discord client failed to initialize within timeout")
         discord_task.cancel()
@@ -77,10 +81,12 @@ app = FastAPI(
 @app.get("/health", tags=["Health"])
 async def health_check():
     """Check API and Discord client health."""
+    uptime_seconds = time.time() - app_start_time if app_start_time else None
     return {
         "status": "ok",
         "discord_client_ready": client.is_ready(),
-        "discord_bot_name": str(client.user) if client.user else "Not connected"
+        "discord_bot_name": str(client.user) if client.user else "Not connected",
+        "uptime_seconds": uptime_seconds
     }
 
 
@@ -108,10 +114,10 @@ async def get_guild_users_endpoint(guild_id: int) -> GuildUsersResponse:
         raise HTTPException(status_code=500, detail="Unexpected error")
 
 
-@app.post("/users", response_model=UsersResponse, tags=["User Operations"])
-async def get_users_by_ids_endpoint(request: UserIdsRequest) -> UsersResponse:
-    """Get user info for a list of user IDs"""
-    if not request.user_ids:
+@app.get("/users", response_model=UsersResponse, tags=["User Operations"])
+async def get_users_by_ids_endpoint(user_ids: list[str] = Query(...)) -> UsersResponse:
+    """Get user info for a list of user IDs (query params: ?user_ids=123&user_ids=456)"""
+    if not user_ids:
         raise HTTPException(status_code=400, detail="user_ids list cannot be empty")
     
     if not client.is_ready():
@@ -119,7 +125,7 @@ async def get_users_by_ids_endpoint(request: UserIdsRequest) -> UsersResponse:
         raise HTTPException(status_code=503, detail="Discord client is not ready")
     
     try:
-        return await get_users_by_ids(client, request.user_ids)
+        return await get_users_by_ids(client, user_ids)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except discord.HTTPException as e:

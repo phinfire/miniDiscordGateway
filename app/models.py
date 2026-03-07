@@ -86,18 +86,6 @@ class UsersResponse(BaseModel):
         }
 
 
-class UserIdsRequest(BaseModel):
-    """Request model for fetching users by IDs."""
-    user_ids: list[str]
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "user_ids": ["123456789", "987654321"]
-            }
-        }
-
-
 class ErrorResponse(BaseModel):
     """Error response model."""
     error: str
