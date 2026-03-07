@@ -11,28 +11,20 @@ from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
 from .discord_client import DiscordClientManager
-from .services import get_guild_users
-from .models import GuildUsersResponse, ErrorResponse
+from .services import get_guild_users, get_users_by_ids
+from .models import GuildUsersResponse, UsersResponse, UserIdsRequest, ErrorResponse
 
-# Load environment variables
 load_dotenv()
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Get Discord token from environment
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 if not DISCORD_TOKEN:
     raise ValueError("DISCORD_TOKEN environment variable not set")
-
-# Discord client instance (singleton)
 client = DiscordClientManager.get_client(DISCORD_TOKEN)
-
-# Track client startup
 client_ready = asyncio.Event()
 
 @client.event
@@ -48,7 +40,6 @@ async def lifespan(app: FastAPI):
     Lifespan context manager for FastAPI.
     Handles startup and shutdown of Discord client.
     """
-    # Startup: Start the Discord client in a background task
     logger.info("🚀 Starting Discord client...")
     
     async def run_discord_client():
@@ -58,8 +49,6 @@ async def lifespan(app: FastAPI):
             logger.error(f"Discord client error: {e}")
     
     discord_task = asyncio.create_task(run_discord_client())
-    
-    # Wait for client to be ready (with timeout)
     try:
         await asyncio.wait_for(client_ready.wait(), timeout=10.0)
         logger.info("Discord client is ready")
@@ -69,8 +58,6 @@ async def lifespan(app: FastAPI):
         raise
     
     yield
-    
-    # Shutdown: Close Discord client
     logger.info("🛑 Shutting down Discord client...")
     await DiscordClientManager.close()
     discord_task.cancel()
@@ -79,8 +66,6 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
-
-# Create FastAPI app with lifespan
 app = FastAPI(
     title="Mini Discord Gateway API",
     description="REST API to retrieve Discord guild users",
@@ -99,96 +84,50 @@ async def health_check():
     }
 
 
-@app.get(
-    "/guild/{guild_id}/users",
-    response_model=GuildUsersResponse,
-    responses={
-        400: {"model": ErrorResponse, "description": "Invalid guild ID"},
-        404: {"model": ErrorResponse, "description": "Guild not found"},
-        503: {"model": ErrorResponse, "description": "Discord client not ready"},
-    },
-    tags=["Guild Operations"]
-)
+@app.get("/guild/{guild_id}/users", response_model=GuildUsersResponse, tags=["Guild Operations"])
 async def get_guild_users_endpoint(guild_id: int) -> GuildUsersResponse:
-    """
-    Get all users in a Discord guild.
-    
-    Returns a JSON object mapping Discord user IDs → user info.
-    
-    **Example Response:**
-    ```json
-    {
-        "guild_id": 987654321,
-        "guild_name": "My Server",
-        "total_members": 42,
-        "users": {
-            "123456789": {
-                "id": 123456789,
-                "username": "user",
-                "discriminator": "0001",
-                "display_name": "User Display Name",
-                "avatar_url": "https://cdn.discordapp.com/...",
-                "is_bot": false,
-                "joined_at": "2023-01-15T10:30:00Z"
-            }
-        }
-    }
-    ```
-    
-    Args:
-        guild_id: The Discord guild ID (snowflake format)
-        
-    Returns:
-        GuildUsersResponse with user map
-        
-    Raises:
-        HTTPException: If client not ready, guild not found, or invalid guild ID
-    """
-    
-    # Validate guild_id
+    """Get all users in a Discord guild."""
     if guild_id <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Guild ID must be a positive integer"
-        )
+        raise HTTPException(status_code=400, detail="Guild ID must be positive")
     
-    # Check if Discord client is ready
     if not client.is_ready():
         logger.error("Discord client is not ready")
-        raise HTTPException(
-            status_code=503,
-            detail="Discord client is not ready. Please try again later."
-        )
+        raise HTTPException(status_code=503, detail="Discord client is not ready")
     
     try:
-        # Fetch guild users using the service layer
-        result = await get_guild_users(client, guild_id)
-        return result
-        
+        return await get_guild_users(client, guild_id)
     except ValueError as e:
-        logger.warning(f"Guild not found: {e}")
         raise HTTPException(status_code=404, detail=str(e))
-        
     except discord.Forbidden:
-        logger.error(f"Permission denied accessing guild {guild_id}")
-        raise HTTPException(
-            status_code=403,
-            detail="Bot does not have permission to access this guild"
-        )
-        
+        raise HTTPException(status_code=403, detail="Bot lacks permission")
     except discord.HTTPException as e:
         logger.error(f"Discord API error: {e}")
-        raise HTTPException(
-            status_code=502,
-            detail="Discord API error. Please try again later."
-        )
-        
+        raise HTTPException(status_code=502, detail="Discord API error")
     except Exception as e:
         logger.error(f"Unexpected error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="An unexpected error occurred"
-        )
+        raise HTTPException(status_code=500, detail="Unexpected error")
+
+
+@app.post("/users", response_model=UsersResponse, tags=["User Operations"])
+async def get_users_by_ids_endpoint(request: UserIdsRequest) -> UsersResponse:
+    """Get user info for a list of user IDs"""
+    if not request.user_ids:
+        raise HTTPException(status_code=400, detail="user_ids list cannot be empty")
+    
+    if not client.is_ready():
+        logger.error("Discord client is not ready")
+        raise HTTPException(status_code=503, detail="Discord client is not ready")
+    
+    try:
+        return await get_users_by_ids(client, request.user_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except discord.HTTPException as e:
+        logger.error(f"Discord API error: {e}")
+        raise HTTPException(status_code=502, detail="Discord API error")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Unexpected error")
 
 
 @app.get("/", tags=["Info"])
