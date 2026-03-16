@@ -64,6 +64,7 @@ jobs:
           if [ ! -f .env ]; then
             cat > .env << EOF
           DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}
+          SERVICE_SECRET=${{ secrets.SERVICE_SECRET }}
           API_PORT=${{ secrets.API_PORT || 8000 }}
           EOF
           fi

@@ -6,14 +6,15 @@ import os
 import asyncio
 import logging
 import time
+import discord
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Header, Depends
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
 from .discord_client import DiscordClientManager
-from .services import get_guild_users, get_users_by_ids
-from .models import GuildUsersResponse, UsersResponse, ErrorResponse
+from .services import get_guild_users, get_users_by_ids, send_message
+from .models import GuildUsersResponse, UsersResponse, ErrorResponse, SendMessageRequest, SendMessageResponse
 
 load_dotenv()
 
@@ -25,9 +26,48 @@ logger = logging.getLogger(__name__)
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 if not DISCORD_TOKEN:
     raise ValueError("DISCORD_TOKEN environment variable not set")
+
+SERVICE_SECRET = os.getenv("SERVICE_SECRET")
+if not SERVICE_SECRET:
+    raise ValueError("SERVICE_SECRET environment variable not set")
+
 client = DiscordClientManager.get_client(DISCORD_TOKEN)
 client_ready = asyncio.Event()
 app_start_time = None
+
+
+async def verify_api_key(authorization: str = Header(...)) -> bool:
+    """
+    Verify API key for protected endpoints.
+    Expected header format: Authorization: Bearer <service_secret>
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Authorization header",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    try:
+        scheme, credentials = authorization.split(" ")
+        if scheme.lower() != "bearer":
+            raise ValueError("Invalid authorization scheme")
+    except ValueError:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Authorization header format. Expected: Bearer <token>",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    if credentials != SERVICE_SECRET:
+        logger.warning(f"Invalid API key attempt")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API key",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    return True
 
 @client.event
 async def on_ready():
@@ -128,6 +168,34 @@ async def get_users_by_ids_endpoint(user_ids: list[str] = Query(...)) -> UsersRe
         return await get_users_by_ids(client, user_ids)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except discord.HTTPException as e:
+        logger.error(f"Discord API error: {e}")
+        raise HTTPException(status_code=502, detail="Discord API error")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Unexpected error")
+
+
+@app.post("/guild/{guild_id}/channel/{channel_id}/message", response_model=SendMessageResponse, tags=["Message Operations"])
+async def send_message_endpoint(guild_id: int, channel_id: int, message: SendMessageRequest, _: bool = Depends(verify_api_key)) -> SendMessageResponse:
+    """Send a message to a Discord channel. Requires valid API key in Authorization header."""
+    if guild_id <= 0:
+        raise HTTPException(status_code=400, detail="Guild ID must be positive")
+    
+    if channel_id <= 0:
+        raise HTTPException(status_code=400, detail="Channel ID must be positive")
+    
+    if not client.is_ready():
+        logger.error("Discord client is not ready")
+        raise HTTPException(status_code=503, detail="Discord client is not ready")
+    
+    try:
+        logger.info(f"Processing message request to guild {guild_id}, channel {channel_id}, message_id={message.message_id}")
+        return await send_message(client, guild_id, channel_id, message.content, message.message_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except discord.Forbidden:
+        raise HTTPException(status_code=403, detail="Bot lacks permission to send/edit messages in this channel")
     except discord.HTTPException as e:
         logger.error(f"Discord API error: {e}")
         raise HTTPException(status_code=502, detail="Discord API error")

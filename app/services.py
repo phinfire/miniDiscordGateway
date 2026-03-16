@@ -1,7 +1,7 @@
 import asyncio
 import discord
 from typing import Dict
-from .models import UserInfo, GuildUsersResponse, UsersResponse
+from .models import UserInfo, GuildUsersResponse, UsersResponse, SendMessageResponse
 import logging
 
 logger = logging.getLogger(__name__)
@@ -113,3 +113,79 @@ async def get_users_by_ids(client: discord.Client, user_ids: list[str]) -> Users
     
     logger.info(f"Retrieved {len(users_map)} out of {len(user_ids)} users")
     return UsersResponse(total_found=len(users_map), users=users_map)
+
+
+async def send_message(client: discord.Client, guild_id: int, channel_id: int, content: str, message_id: str | None = None) -> SendMessageResponse:
+    """
+    Send a new message or edit an existing message in a Discord channel.
+    
+    Args:
+        client: Discord client instance
+        guild_id: The ID of the guild
+        channel_id: The ID of the channel
+        content: The message content to send or edit
+        message_id: Optional ID of an existing message to edit. If provided, edits instead of sending.
+        
+    Returns:
+        SendMessageResponse with message details
+        
+    Raises:
+        ValueError: If guild, channel, or message not found
+        discord.Forbidden: If bot lacks permission to send/edit messages
+    """
+    guild = client.get_guild(guild_id)
+    if not guild:
+        logger.warning(f"Guild {guild_id} not found")
+        raise ValueError(f"Guild {guild_id} not found")
+    
+    channel = guild.get_channel(channel_id)
+    if not channel:
+        logger.warning(f"Channel {channel_id} not found in guild {guild_id}")
+        raise ValueError(f"Channel {channel_id} not found in guild {guild_id}")
+    
+    if not isinstance(channel, discord.TextChannel):
+        logger.warning(f"Channel {channel_id} is not a text channel")
+        raise ValueError(f"Channel {channel_id} is not a text channel")
+    
+    if not content or not content.strip():
+        raise ValueError("Message content cannot be empty")
+    
+    try:
+        if message_id:
+            # Edit existing message
+            logger.info(f"Fetching message {message_id} from channel {channel.name} ({channel_id}) in guild {guild.name}")
+            try:
+                message = await channel.fetch_message(int(message_id))
+            except ValueError:
+                raise ValueError(f"Invalid message ID format: {message_id}")
+            except discord.NotFound:
+                raise ValueError(f"Message {message_id} not found in channel {channel_id}")
+            
+            # Verify the message was sent by the bot
+            if message.author != client.user:
+                logger.warning(f"Message {message_id} was not sent by the bot (author: {message.author})")
+                raise ValueError(f"Message {message_id} was not sent by the bot")
+            
+            logger.info(f"Editing message {message_id} in channel {channel.name}")
+            await message.edit(content=content)
+            logger.info(f"Message {message_id} edited successfully")
+        else:
+            # Send new message
+            logger.info(f"Sending message to channel {channel.name} ({channel_id}) in guild {guild.name}")
+            message = await channel.send(content)
+            logger.info(f"Message sent successfully: {message.id}")
+        
+        return SendMessageResponse(
+            message_id=str(message.id),
+            guild_id=str(guild.id),
+            channel_id=str(channel.id),
+            author=str(message.author),
+            content=message.content,
+            timestamp=message.created_at.isoformat()
+        )
+    except discord.Forbidden as e:
+        logger.error(f"Permission denied to send/edit message in channel {channel_id}: {e}")
+        raise
+    except discord.HTTPException as e:
+        logger.error(f"Discord API error sending/editing message: {e}")
+        raise

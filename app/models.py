@@ -98,3 +98,39 @@ class ErrorResponse(BaseModel):
                 "detail": "Guild ID 999 does not exist"
             }
         }
+
+
+class SendMessageRequest(BaseModel):
+    """Request model for sending or editing a message in a Discord channel."""
+    content: str
+    message_id: str | None = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "content": "Hello, Discord!",
+                "message_id": None
+            }
+        }
+
+
+class SendMessageResponse(BaseModel):
+    """Response model for sending a message to a Discord channel."""
+    message_id: str
+    guild_id: str
+    channel_id: str
+    author: str
+    content: str
+    timestamp: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "message_id": "1234567890",
+                "guild_id": "987654321",
+                "channel_id": "1122334455",
+                "author": "BotName#0000",
+                "content": "Hello, Discord!",
+                "timestamp": "2023-01-15T10:30:00Z"
+            }
+        }
